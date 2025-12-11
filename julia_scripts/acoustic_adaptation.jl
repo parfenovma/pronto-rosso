@@ -1,27 +1,34 @@
 using Gridap
 using Gridap.ODEs
-using Gridap.Geometry
 
+# 1. СЕТКА (Покрывает всё пространство)
 L = 3.0
 H = 1.0
-n = 40
-model_ref = CartesianDiscreteModel((0,L,0,H), (3*n, n))
+n = 100
+model = CartesianDiscreteModel((0,L,0,H), (3*n, n)) 
 
-function mapping(x)
-    xi, yi = x[1], x[2]
-    envelope = 0.1 * sin(2*pi*xi)
-    new_y = (yi/H) * (H - 2*envelope) + envelope
-    return VectorValue(xi, new_y)
-end
-
-base_model = UnstructuredDiscreteModel(model_ref)
-model = Gridap.Geometry.MappedDiscreteModel(base_model, mapping)
-
-
+# Обычные пространства
 reffe = ReferenceFE(lagrangian, Float64, 1)
-
-V0 = TestFESpace(model, reffe, conformity=:H1)# , dirichlet_tags="boundary")
+V0 = TestFESpace(model, reffe, conformity=:H1) 
+# Можно добавить Dirichlet по краям большой коробки, если хотите
+# V0 = TestFESpace(model, reffe, conformity=:H1, dirichlet_tags="boundary")
 U = TransientTrialFESpace(V0)
+
+function is_inside_tube(x)
+    xi, yi = x[1], x[2]
+    
+    amp = 0.1
+    freq = 2 * pi * 2.0
+
+    offset = amp * sin(freq * xi)
+    thickness = 0.2
+    
+    y_center = 0.5
+    y_top = y_center + thickness + offset
+    y_bot = y_center - thickness - offset
+    
+    return (yi > y_bot) && (yi < y_top)
+end
 
 degree = 2
 Ω = Triangulation(model)
@@ -34,29 +41,25 @@ dΓ_wall = Measure(Γ_wall, 2)
 dΓ_ends = Measure(Γ_ends, 2)
 
 # TODO: replace w pyhysical
-c = 1.0
-rho = 1.0
-Z0 = rho * c
+c_in = 3.0  # Внутри
+c_out = 1.0 # Снаружи
 
+function c_x(x)
+    if is_inside_tube(x)
+        return c_in
+    else
+        return c_out
+    end
+end
+c_field = interpolate_everywhere(c_x, U(0.0))
+gamma = 0.1
 
-Z_wall = 100.0 * Z0
+res(t, u, v) = ∫( ∂tt(u)*v + (c_field*c_field) * (∇(u)⋅∇(v)) )dΩ
 
-
-
-res_vol(t, u, v) = ∫( ∂tt(u)*v + c^2 * (∇(u)⋅∇(v)) )dΩ
-jac_vol(t, u, du, v) = ∫( c^2 * (∇(du)⋅∇(v)) )dΩ
-jac_tt_vol(t, u, dutt, v) = ∫( dutt*v )dΩ
-
-res_wall(t, u, v) = ∫( (1/Z_wall) * ∂t(u) * v )dΓ_wall
-jac_t_wall(t, u, dut, v) = ∫( (1/Z_wall) * dut * v )dΓ_wall
-
-res_ends(t, u, v) = ∫( (1/Z0) * ∂t(u) * v )dΓ_ends
-jac_t_ends(t, u, dut, v) = ∫( (1/Z0) * dut * v )dΓ_ends
-
-res(t, u, v) = res_vol(t,u,v) + res_wall(t,u,v) + res_ends(t,u,v)
-jac(t, u, du, v) = jac_vol(t,u,du,v)
-jac_tt(t, u, dutt, v) = jac_tt_vol(t,u,dutt,v)
-jac_t(t, u, dut, v) = jac_t_wall(t,u,dut,v) + jac_t_ends(t,u,dut,v)
+# В Якобиане тоже используем переменное c
+jac(t, u, du, v) = ∫( (c_field*c_field) * (∇(du)⋅∇(v)) )dΩ
+jac_tt(t, u, dutt, v) = ∫( dutt*v )dΩ
+res(t, u, v) = ∫( ∂tt(u)*v + gamma*∂t(u)*v + (c_field*c_field) * (∇(u)⋅∇(v)) )dΩ
 function u0_func(x)
     r2 = (x[1])^2  + (x[2]-0.5)^2
     return exp(-100*r2)
@@ -73,15 +76,15 @@ v0 = interpolate_everywhere(v0_func, U(0.0))
 op = TransientFEOperator(res, (jac, jac_t, jac_tt), U, V0)
 t0 = 0.0
 t1 = 4.0
-dt = 0.01
+dt = 0.02
 nonlinear_solver = NLSolver(show_trace=true, method=:newton) 
 ode_solver = Newmark(nonlinear_solver, dt, 0.5, 0.25)
 sol_t = solve(ode_solver, op, t0, t1, (u0, v0))
 mkpath("wave_simulation/results")
 createpvd("wave_simulation/results") do pvd
-    pvd[0] = createvtk(Ω, "wave_simulation/results/wave_0" * ".vtu", cellfields=["u" => u0])
+    pvd[0] = createvtk(Ω, "wave_simulation/results/wave_0" * ".vtu", cellfields=["u" => u0, "c_map"=>c_field])
     for (tn, uh) in sol_t
         println("Solving at time $tn")
-        pvd[tn] = createvtk(Ω, "wave_simulation/results/wave_$tn" * ".vtu", cellfields=["u"=>uh])
+        pvd[tn] = createvtk(Ω, "wave_simulation/results/wave_$tn" * ".vtu", cellfields=["u"=>uh, "c_map"=>c_field])
     end
 end
