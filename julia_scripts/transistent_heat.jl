@@ -16,7 +16,6 @@ m(t, dtu, v) = ∫(v * dtu)dΩ
 a(t, u, v) = ∫(α(t) * ∇(v) ⋅ ∇(u))dΩ
 l(t, v) = ∫(v * f(t))dΩ
 op = TransientLinearFEOperator((a, m), l, Ug, V0)
-op_opt = TransientLinearFEOperator((a, m), l, Ug, V0, constant_forms=(true, false))
 ls = LUSolver()
 Δt = 0.05
 θ = 0.5

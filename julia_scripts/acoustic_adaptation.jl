@@ -44,6 +44,7 @@ dΓ_ends = Measure(Γ_ends, 2)
 c_in = 3.0  # Внутри
 c_out = 1.0 # Снаружи
 
+
 function c_x(x)
     if is_inside_tube(x)
         return c_in
@@ -51,15 +52,50 @@ function c_x(x)
         return c_out
     end
 end
-c_field = interpolate_everywhere(c_x, U(0.0))
-gamma = 0.1
 
-res(t, u, v) = ∫( ∂tt(u)*v + (c_field*c_field) * (∇(u)⋅∇(v)) )dΩ
+
+gamma_in = 0.1
+gamma_out = 3.0
+function gamma_x(x)
+    if is_inside_tube(x)
+        return gamma_in
+    else
+        return gamma_out
+    end
+end
+
+rho_in = 1.0
+rho_out = 3.0
+function rho_x(x)
+    if is_inside_tube(x)
+        return rho_in
+    else
+        return rho_out
+    end
+end
+
+c_field = interpolate_everywhere(c_x, U(0.0))
+gamma_field = interpolate_everywhere(gamma_x, U(0.0))
+rho_field = interpolate_everywhere(rho_x, U(0.0))
+
+inv_bulk = 1.0 / (rho_field * c_field * c_field) # = 1 / (rho c^2)
+inv_rho  = 1.0 / rho_field                       # = 1 / rho
+
+
+# MASS TERM (Инерция): (1 / rho c^2) * u_tt
+# DAMPING TERM (Потери): gamma * u_t 
+# STIFFNESS TERM (Жесткость): (1 / rho) * grad(u) * grad(v)
+
+res(t, u, v) = ∫( 
+    inv_bulk * ∂tt(u) * v +      
+    inv_bulk * gamma_field * ∂t(u) * v +
+    inv_rho * (∇(u)⋅∇(v))
+)dΩ
 
 # В Якобиане тоже используем переменное c
-jac(t, u, du, v) = ∫( (c_field*c_field) * (∇(du)⋅∇(v)) )dΩ
-jac_tt(t, u, dutt, v) = ∫( dutt*v )dΩ
-res(t, u, v) = ∫( ∂tt(u)*v + gamma*∂t(u)*v + (c_field*c_field) * (∇(u)⋅∇(v)) )dΩ
+jac(t, u, du, v) = ∫( inv_rho * (∇(du)⋅∇(v)) )dΩ
+jac_tt(t, u, dutt, v) = ∫( inv_bulk * dutt * v )dΩ
+# res(t, u, v) = ∫( ∂tt(u)*v + gamma_field*∂t(u)*v + (c_field*c_field) * (∇(u)⋅∇(v)) )dΩ
 function u0_func(x)
     r2 = (x[1])^2  + (x[2]-0.5)^2
     return exp(-100*r2)
@@ -71,7 +107,7 @@ u0 = interpolate_everywhere(u0_func, U(0.0))
 v0 = interpolate_everywhere(v0_func, U(0.0)) 
 # res(t, u, v) = ∫( ∂tt(u)*v + c^2 * (∇(u)⋅∇(v)) )dΩ
 # jac(t, u, du, v) = ∫( c^2 * (∇(du)⋅∇(v)) )dΩ
-# jac_t(t, u, dut, v) = ∫( 0.0*dut*v )dΩ
+jac_t(t, u, dut, v) = ∫( 0.0*dut*v )dΩ
 # jac_tt(t, u, dutt, v) = ∫( dutt*v )dΩ
 op = TransientFEOperator(res, (jac, jac_t, jac_tt), U, V0)
 t0 = 0.0
