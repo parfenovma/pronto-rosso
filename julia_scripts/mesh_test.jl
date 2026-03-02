@@ -8,7 +8,7 @@ using Plots
 # 1. EXPERIMENT PARAMETERS
 # ==========================================
 freq = 220000.0       # Frequency in Hz
-amp_bend = 0.003      # Corrugation amplitude in meters (3 mm)
+amp_bend = 0.006     # Corrugation amplitude in meters (3 mm)
 
 # Waveguide geometry
 L = 0.025             
@@ -75,6 +75,7 @@ cp_solid = 2340.0
 cs_solid = 1170.0        
 mu_solid = rho_solid * cs_solid^2 
 lam_solid = rho_solid * cp_solid^2 - 2*mu_solid 
+gamma_solid = 50000.0
 
 # ==========================================
 # 4. BOUNDARY CONDITIONS (PZT SOURCE)
@@ -104,30 +105,23 @@ degree = 2
 Ω = Triangulation(model)
 dΩ = Measure(Ω, degree)
 
-# PLANAR MICROPHONE MEASURE
+# PLANAR MICROPHONE MEASURE (Integrates over the right boundary)
 Γ_out = BoundaryTriangulation(model, tags=["right_mic"])
 dΓ_out = Measure(Γ_out, degree)
-n_Γ = VectorValue(1.0, 0.0) 
+n_Γ = VectorValue(1.0, 0.0) # Normal vector for X-axis acoustic pressure
 
 σ(ε) = lam_solid * tr(ε) * one(ε) + 2.0 * mu_solid * ε
-
-Z_p = rho_solid * cp_solid  
-
-res(t, u, v) = ∫( rho_solid * ∂tt(u) ⋅ v + σ∘(ε(u)) ⊙ ε(v) )dΩ + 
-               ∫( Z_p * ∂t(u) ⋅ v )dΓ_out
-
+Z_p = rho_solid * cp_solid 
+res(t, u, v) = ∫( rho_solid * ∂tt(u) ⋅ v + gamma_solid * rho_solid * ∂t(u) ⋅ v + σ∘(ε(u)) ⊙ ε(v) )dΩ + ∫( Z_p * ∂t(u) ⋅ v )dΓ_out
 jac(t, u, du, v) = ∫( σ∘(ε(du)) ⊙ ε(v) )dΩ
-
-jac_t(t, u, dut, v) = ∫( 0.0 * dut ⋅ v )dΩ + 
-                      ∫( Z_p * dut ⋅ v )dΓ_out
-
+jac_t(t, u, dut, v) = ∫( 0.0 * dut ⋅ v )dΩ + ∫( Z_p * dut ⋅ v )dΓ_out
 jac_tt(t, u, dutt, v) = ∫( rho_solid * dutt ⋅ v )dΩ
 
 # ==========================================
 # 6. SOLVER INITIALIZATION
 # ==========================================
 t0 = 0.0
-t1 = 60.0e-6 
+t1 = 50.0e-6 
 dt = (1.0 / freq) / 15.0  
 
 println("\nStarting simulation: Freq = $(freq/1000) kHz, Bend = $(amp_bend*1000) mm")
