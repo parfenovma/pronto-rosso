@@ -8,7 +8,7 @@ using Plots
 # 1. EXPERIMENT PARAMETERS
 # ==========================================
 freq = 220000.0       # Frequency in Hz
-amp_bend = 0.006     # Corrugation amplitude in meters (3 mm)
+amp_bend = 0.003     # Corrugation amplitude in meters (3 mm)
 
 # Waveguide geometry
 L = 0.025             
