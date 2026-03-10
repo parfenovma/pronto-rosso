@@ -61,7 +61,8 @@ gmsh.option.setNumber("General.Terminal", 1)
 gmsh.model.add("PhononicCrystal")
 
 # Создаем точки по математической функции (Вызываем с глубиной волны A = 2.0)
-points_mm = generate_crystal_points(2.0)
+amp_gap = 3.4
+points_mm = generate_crystal_points(amp_gap)
 points = [(x * 1e-3, y * 1e-3) for (x, y) in points_mm]
 
 # 1. Загружаем точки в Gmsh, фильтруя микро-дубликаты (защита от ошибок)
@@ -157,8 +158,8 @@ if mesh_2d_msh
     
     gmsh.model.mesh.field.add("Threshold", 2)
     gmsh.model.mesh.field.setNumber(2, "InField", 1)
-    gmsh.model.mesh.field.setNumber(2, "SizeMin", 0.15 * 1e-3)
-    gmsh.model.mesh.field.setNumber(2, "SizeMax", 0.60 * 1e-3) 
+    gmsh.model.mesh.field.setNumber(2, "SizeMin", 0.1 * 1e-3)
+    gmsh.model.mesh.field.setNumber(2, "SizeMax", 0.4 * 1e-3) 
     gmsh.model.mesh.field.setNumber(2, "DistMin", 0.2 * 1e-3)
     gmsh.model.mesh.field.setNumber(2, "DistMax", 2.0 * 1e-3)
     
@@ -168,8 +169,8 @@ if mesh_2d_msh
     # === ГЕНЕРАЦИЯ 2D СЕТКИ ===
     println("==> Построение 2D сетки для Gridap...")
     gmsh.model.mesh.generate(2)
-    gmsh.write("crystal_mesh_2d.msh")
-    println("\tСохранен файл: crystal_mesh_2d.msh")
+    gmsh.write("crystal_mesh_2d_$(Int(amp_gap*10)).msh")
+    println("\tСохранен файл: crystal_mesh_2d_$(Int(amp_gap*10)).msh")
 end
 
 # Если хочешь посмотреть и покрутить красивый результат ручками - раскомментируй:

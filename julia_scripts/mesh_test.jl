@@ -5,6 +5,8 @@ using Gridap.ODEs
 using Plots
 using FFTW
 
+
+amp_gap = 3.4
 # ==========================================
 # 1. EXPERIMENT PARAMETERS
 # ==========================================
@@ -15,7 +17,7 @@ P_amplitude = 1e6     # АМПЛИТУДА ДАВЛЕНИЯ ПЭП (1 МПа)
 # 3. GRIDAP SETUP & PHYSICS
 # ==========================================
 println("Loading mesh...")
-model = GmshDiscreteModel("crystal_mesh_2d.msh") 
+model = GmshDiscreteModel("crystal_mesh_2d_$(Int(amp_gap*10)).msh") 
 
 rho_solid = 1150.0       
 cp_solid = 2340.0        
@@ -23,13 +25,15 @@ cs_solid = 1170.0
 mu_solid = rho_solid * cs_solid^2 
 lam_solid = rho_solid * cp_solid^2 - 2*mu_solid 
 gamma_solid = 50000.0
+alpha_damp = 0.0 
+beta_damp = 4.0e-8
 
 # ==========================================
 # 4. BOUNDARY CONDITIONS (PZT SOURCE)
 # ==========================================
 # Генератор радиоимпульса с окном Ханна
 function pzt_signal(t)
-    n_cycles = 4.0               
+    n_cycles = 5.0               
     duration = n_cycles / freq  
     
     if t < duration
@@ -55,25 +59,36 @@ degree = 2
 Ω = Triangulation(model)
 dΩ = Measure(Ω, degree)
 
-# Микрофон (правый край)
 Γ_out = BoundaryTriangulation(model, tags=["Microphone"])
 dΓ_out = Measure(Γ_out, degree)
 n_out = VectorValue(1.0, 0.0)
 
-# Источник PZT (левый край)
 Γ_in = BoundaryTriangulation(model, tags=["Source"])
 dΓ_in = Measure(Γ_in, degree)
-n_in = VectorValue(-1.0, 0.0) # Вектор нормали смотрит влево (-X)
+n_in = VectorValue(-1.0, 0.0) 
 
 σ(ε) = lam_solid * tr(ε) * one(ε) + 2.0 * mu_solid * ε
-Z_p = rho_solid * cp_solid 
 
-# res с учетом граничного условия Неймана (давления)
-res(t, u, v) = ∫( rho_solid * ∂tt(u) ⋅ v + σ∘(ε(u)) ⊙ ε(v) )dΩ - 
+# ==========================================
+# ОБНОВЛЕННЫЕ УРАВНЕНИЯ (С ВЯЗКОСТНЫМ ТРЕНИЕМ)
+# ==========================================
+# 1. res() ТЕПЕРЬ ВКЛЮЧАЕТ В СЕБЯ ∂t(u) ВНУТРИ ТЕНЗОРА НАПРЯЖЕНИЙ!
+res(t, u, v) = ∫( 
+                 rho_solid * ∂tt(u) ⋅ v + 
+                 alpha_damp * rho_solid * ∂t(u) ⋅ v +    # Массовое торможение
+                 beta_damp * (σ∘(ε(∂t(u))) ⊙ ε(v)) +     # Внутреннее трение (Вязкость Кельвина-Фойгта)
+                 σ∘(ε(u)) ⊙ ε(v)                         # Упругость (Пружина Кельвина-Фойгта)
+               )dΩ - 
                ∫( (P_amplitude * pzt_signal(t)) * (n_in ⋅ v) )dΓ_in
 
+# 2. Якобианы (производные решателя) обновляем соответственно:
 jac(t, u, du, v) = ∫( σ∘(ε(du)) ⊙ ε(v) )dΩ
-jac_t(t, u, dut, v) = ∫( 0.0 * dut ⋅ v )dΩ 
+
+# jac_t теперь знает, что от скорости (dut) зависит и вязкость материала!
+jac_t(t, u, dut, v) = ∫( alpha_damp * rho_solid * dut ⋅ v + 
+                         beta_damp * (σ∘(ε(dut)) ⊙ ε(v)) 
+                       )dΩ
+
 jac_tt(t, u, dutt, v) = ∫( rho_solid * dutt ⋅ v )dΩ
 
 # ==========================================
@@ -101,7 +116,7 @@ sol_t = solve(ode_solver, op, t0, t1, (uh0, vh0))
 # ==========================================
 # 7. MAIN LOOP: SOLVING & SENSOR LOGGING
 # ==========================================
-out_dir = "results_gmsh"
+out_dir = "results_gmsh_$(Int(amp_gap*10))"
 mkpath(out_dir)
 
 time_history = Float64[]
@@ -143,13 +158,13 @@ in_signal_history = (P_amplitude / 1e6) .* pzt_signal.(time_history)
 
 # График 1: Сигнал излучателя
 p_i = scatter(t_us, in_signal_history, 
-           title="Input Signal (PZT Pressure)", 
+           title="Input Signal (PZT Pressure) $(amp_gap)mm", 
            ylabel="Pressure (MPa)",
            linewidth=2, color=:red, legend=false, grid=true)
 
 # График 2: Сигнал на микрофоне
 p_o = scatter(t_us, signal_history_out_MPa, 
-           title="Output Signal (Microphone)", 
+           title="Output Signal (Microphone) $(amp_gap)mm", 
            xlabel="Time (us)", 
            ylabel="Pressure (MPa)",
            linewidth=2, color=:blue, legend=false, grid=true)
@@ -158,9 +173,9 @@ p_o = scatter(t_us, signal_history_out_MPa,
 p_combined = plot(p_i, p_o, layout=(2, 1), size=(800, 600))
 
 # Сохраняем картинки
-savefig(p_i, "planar_mic_input.png")     # Отдельно вход
-savefig(p_o, "planar_mic_signal.png")    # Отдельно выход
-savefig(p_combined, "signals_combined.png") # Красивый совмещенный!
+savefig(p_i, joinpath(out_dir, "planar_mic_input.png"))   # Отдельно вход
+savefig(p_o, joinpath(out_dir, "planar_mic_signal.png"))    # Отдельно выход
+savefig(p_combined, joinpath(out_dir, "signals_combined.png")) # Красивый совмещенный!
 
 display(p_combined)
 
@@ -202,7 +217,27 @@ p_fft_out = plot(freqs_kHz, mag_out,
              color=:blue, linewidth=2, grid=true, legend=false,
              xlims=(0, 800))
 
+             valid_indices = findall(x -> x > (maximum(mag_in) * 0.05), mag_in) # Берем только те частоты, где есть энергия накачки
+
+freqs_valid = freqs_kHz[valid_indices]
+mag_in_valid = mag_in[valid_indices]
+mag_out_valid = mag_out[valid_indices]
+
+# Считаем коэффициент пропускания в Децибелах по мощности: 20 * log10(Out / In)
+transmission_dB = 20.0 .* log10.(mag_out_valid ./ mag_in_valid)
+
+# Отрисовка
+p_trans = plot(freqs_valid, transmission_dB, 
+             title="Transmission Spectrum (Acoustic Bandgap)", 
+             xlabel="Frequency (kHz)", 
+             ylabel="Transmission (dB)", 
+             color=:purple, linewidth=2.5, grid=true, legend=false)
+
+# Добавляем горизонтальную линию на 0 дБ (идеальное пропускание)
+hline!(p_trans, [0.0], color=:black, linestyle=:dash, linewidth=1.5)
+
+savefig(p_trans, joinpath(out_dir,"transmission_dB.png"))
 # Объединяем спектры
 p_fft_combined = plot(p_fft_in, p_fft_out, layout=(2, 1), size=(800, 600))
-savefig(p_fft_combined, "fft_spectrum.png")
+savefig(p_fft_combined, joinpath(out_dir, "fft_spectrum.png"))
 display(p_fft_combined)
