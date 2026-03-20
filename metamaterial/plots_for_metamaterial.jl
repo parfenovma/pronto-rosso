@@ -19,14 +19,14 @@ end
 # ╔═╡ f2d289a0-1d73-11f1-afa8-892743c6a1d9
 begin
     using JLD2
-    using WGLMakie
+    using Plots
     using FFTW
     using PlutoUI
-    md"Пакеты загружены!"
+	using DSP
 end
 
 
-# ╔═╡ 09b0f30f-2486-4771-a74e-b45707090102
+# ╔═╡ 5da2a73c-cbdd-4f63-b203-30edd7b1693f
 begin
     SIG_DIR = "3_signals"
     
@@ -54,15 +54,19 @@ begin
 end
 
 
-# ╔═╡ 0ab2150b-e81e-4212-93e4-7cab34d610c5
+# ╔═╡ a284b954-11bd-4b5f-a4fd-b77751232a72
 md"""
-### 🎛️ Пульт управления метаматериалом
-**Амплитуда вырезов (A):** $(@bind sel_A Select(string.(unique_A))) mm
-*(0.0 - это плоский контрольный образец)*
+	0) Убрать отражение от микрофона
+	1) Спектр (сокльзящее преобразование Фурье)
+	2) Найти смещение фазы: max(corr)(h)
 
-**Частота источника:** $(@bind sel_F Select(string.(unique_F))) kHz
 """
 
+# ╔═╡ 0ab2150b-e81e-4212-93e4-7cab34d610c5
+md"""
+**Амплитуда вырезов (A):** $(@bind sel_A Select(string.(unique_A))) mm
+**Частота источника:** $(@bind sel_F Select(string.(unique_F))) kHz
+"""
 
 # ╔═╡ 07f5686a-bef4-4f46-b769-8bee8fa043ec
 begin
@@ -75,7 +79,7 @@ begin
 end
 
 
-# ╔═╡ 7aae0b3d-3d77-4d51-b3ba-b89623bf55c6
+# ╔═╡ 7ee8b9bd-85ae-4572-a720-55e557155d74
 begin
     if ismissing(data)
         md"**[!] Нет данных для комбинации A=$sel_A, F=$sel_F**"
@@ -94,38 +98,202 @@ begin
     end
 end
 
-
-# ╔═╡ e44c91ed-7e37-4922-8fa5-4257fc694e38
+# ╔═╡ 9457d70e-62f3-4f98-8770-5be69776168a
 begin
     if ismissing(data)
-        md""
+        md"Нет данных для корреляции"
     else
         t = data["time"]
         sig_in = data["signal_in"]
         sig_out = data["signal_out"]
+        dt = t[2] - t[1]
         
-        # Математика FFT
-        dt_samp = t[2] - t[1]
-        N = length(t)
-        freqs = fftfreq(N, 1.0/dt_samp)
+        # 1. Вычисляем огибающие
+        env_in_raw = abs.(hilbert(sig_in))
+        env_out_raw = abs.(hilbert(sig_out))
         
-        half_N = N ÷ 2
+        # --- НОРМАЛИЗАЦИЯ ---
+        # Делим каждый массив на его максимум, чтобы все было от 0 до 1
+        env_in = env_in_raw ./ maximum(env_in_raw)
+        env_out = env_out_raw ./ maximum(env_out_raw)
+        
+        # Сырые сигналы тоже нормируем, чтобы они красиво лежали под куполами
+        sig_in_norm = sig_in ./ maximum(abs.(sig_in))
+        sig_out_norm = sig_out ./ maximum(abs.(sig_out))
+        # --------------------
+        
+        # 2. Взаимная корреляция нормированных огибающих
+        corr = xcorr(env_out, env_in)
+        
+        N_samples = length(sig_in)
+        lags_time_us = (-(N_samples - 1):(N_samples - 1)) .* dt .* 1e6
+        
+        # 3. ПОИСК ЛОКАЛЬНЫХ ПИКОВ
+        peak_indices = Int[]
+        for i in 2:(length(corr)-1)
+            if corr[i] > corr[i-1] && corr[i] > corr[i+1]
+                push!(peak_indices, i)
+            end
+        end
+        
+        sort!(peak_indices, by = i -> corr[i], rev=true)
+        
+        idx1 = peak_indices[1]
+        idx2 = length(peak_indices) > 1 ? peak_indices[2] : peak_indices[1]
+        
+        t1, c1 = lags_time_us[idx1], corr[idx1]
+        t2, c2 = lags_time_us[idx2], corr[idx2]
+        
+        p_sig = plot(title = "Нормированные Сигналы и Огибающие", ylabel = "Амплитуда (отн. ед.)")
+        
+        plot!(p_sig, t.*1e6, sig_in_norm, color=:red, linealpha=0.3, label="")
+        plot!(p_sig, t.*1e6, sig_out_norm, color=:blue, linealpha=0.3, label="")
+        
+        plot!(p_sig, t.*1e6, env_in, color=:red, lw=2, label="Env In")
+        plot!(p_sig, t.*1e6, env_out, color=:blue, lw=2, label="Env Out")
+        
+        p_corr = plot(lags_time_us, corr, color=:darkgreen, lw=2,
+            xlabel="Сдвиг во времени (мкс)", ylabel="Значение корреляции", 
+            title="Функция взаимной корреляции", legend=:topleft)
+            
+        vline!(p_corr, [t1], color=:red, ls=:dash, lw=2, label="Пик 1: $(round(t1, digits=1)) мкс")
+        scatter!(p_corr, [t1], [c1], color=:red, ms=6, label="")
+        annotate!(p_corr, t1, c1 + (maximum(corr)*0.05), text(" $(round(c1, digits=2))", :left, 10, :red))
+        
+		vline!(p_corr, [t2], color=:orange, ls=:dash, lw=2, label="Пик 2: $(round(t2, digits=1)) мкс")
+		scatter!(p_corr, [t2], [c2], color=:orange, ms=6, label="")
+		annotate!(p_corr, t2, c2 + (maximum(corr)*0.05), text(" $(round(c2, digits=2))", :left, 10, :orange))
+        
+        plot(p_sig, p_corr, layout=(2,1), size=(800, 600))
+    end
+end
+
+
+# ╔═╡ 189539c5-d6b8-4bae-90ef-873b605ee35a
+md"""
+**Частота источника:** $(@bind f2 Select(string.(unique_F))) kHz
+"""
+
+# ╔═╡ 4a0857d8-24b2-4165-bae0-1943f4de55da
+begin
+    SIG_DIR_GLOBAL = "3_signals"
+    
+    if !isdir(SIG_DIR_GLOBAL)
+        md"Нет папки с данными!"
+    else
+        all_files = filter(f -> endswith(f, ".jld2"), readdir(SIG_DIR_GLOBAL))
+        
+        results = Dict{Float64, Tuple{Vector{Float64}, Vector{Float64}}}()
+        
+        for f in all_files
+            m = match(r"data_A_([0-9.]+)_F_([0-9.]+)\.jld2$", f)
+            if m !== nothing
+                curr_A = parse(Float64, m.captures[1])
+                curr_F = parse(Float64, m.captures[2])
+				if curr_F != parse(Float64,f2)
+					continue
+				end
+                
+                curr_data = load(joinpath(SIG_DIR_GLOBAL, f))
+                
+                dt_s = curr_data["time"][2] - curr_data["time"][1]
+                
+                env_in = abs.(hilbert(curr_data["signal_in"]))
+                env_out = abs.(hilbert(curr_data["signal_out"]))
+                
+                corr = xcorr(env_out, env_in)
+                max_i = argmax(corr)
+                shift_idx = max_i - length(curr_data["signal_in"])
+                curr_delay_us = shift_idx * dt_s * 1e6
+                
+                if !haskey(results, curr_F)
+                    results[curr_F] = (Float64[], Float64[])
+                end
+                push!(results[curr_F][1], curr_A)
+                push!(results[curr_F][2], curr_delay_us)
+            end
+        end
+        
+        for F in keys(results)
+            perm = sortperm(results[F][1]) 
+            results[F] = (results[F][1][perm], results[F][2][perm])
+        end
+
+        p_global = plot(
+            title = "Зависимость Задержки от смещения",
+            xlabel = "Амплитуда вырезов A (мм)", 
+            ylabel = "Время задержки огибающей (мкс)",
+            legend = :topleft,
+            grid = true,
+            size = (800, 500),
+            palette = :tab10
+        )
+            
+        # Наносим линии по очереди
+        for (i, F) in enumerate(sort(collect(keys(results))))
+            a_arr, d_arr = results[F]
+            
+            if length(a_arr) > 1
+                # Рисуем линию ТОЛЩИНОЙ 2.5 с жирными КРУЖОЧКАМИ (marker=:circle) на узлах
+                plot!(p_global, a_arr, d_arr, linewidth=2.5, marker=(:circle, 6), label="$(F) кГц")
+            else
+                # Если точка только одна, просто ставим точку
+                scatter!(p_global, a_arr, d_arr, markersize=6, label="$(F) кГц")
+            end
+        end
+        
+        p_global # Выводим готовый график
+    end
+end
+
+
+# ╔═╡ d3746a92-cd56-423f-88dd-6db326681ef7
+begin
+    if ismissing(data)
+        md"Нет данных для спектра"
+    else
+        ft = data["time"]
+        fsig_in = data["signal_in"]
+        fsig_out = data["signal_out"]
+        
+        dt_samp = ft[2] - ft[1]
+        N_orig = length(fsig_in)
+        
+        # ==========================================
+        # МАГИЯ DSP: ZERO-PADDING (СГЛАЖИВАНИЕ СПЕКТРА)
+        # ==========================================
+        pad_factor = 8 # Во сколько раз увеличиваем плотность точек на графике
+        
+        # Округляем до ближайшей степени двойки (FFT работает с ними молниеносно)
+        N_padded = nextpow(2, N_orig * pad_factor) 
+        
+        # Дописываем нули в конец сигналов
+        sig_in_padded = vcat(fsig_in, zeros(N_padded - N_orig))
+        sig_out_padded = vcat(fsig_out, zeros(N_padded - N_orig))
+        
+        # Теперь шаг по частоте будет в 8 раз плотнее!
+        freqs = fftfreq(N_padded, 1.0/dt_samp)
+        half_N = N_padded ÷ 2
         f_kHz = freqs[1:half_N] ./ 1000.0
         
-        mag_in = abs.(fft(sig_in)[1:half_N]) ./ N
-        mag_out = abs.(fft(sig_out)[1:half_N]) ./ N
+        # Делаем FFT. 
+        # ВАЖНО: делим на N_orig (а не на N_padded), чтобы сохранить правильные значения в МПа
+        mag_in = abs.(fft(sig_in_padded)[1:half_N]) ./ N_orig
+        mag_out = abs.(fft(sig_out_padded)[1:half_N]) ./ N_orig
         
-        # Transmission Loss
-        # Берем только зону, где накачка > 1% от максимума
+        # Рассчитываем Transmission Loss (Bandgap)
         valid = findall(x -> x > (maximum(mag_in) * 0.01), mag_in) 
         trans_dB = 20.0 .* log10.(mag_out[valid] ./ mag_in[valid])
         
+        # ==========================================
+        # ОТРИСОВКА (Plots.jl)
+        # ==========================================
         p_spec = plot(f_kHz, mag_out, 
-            title="Выходной спектр (Эхо кристалла)", 
-            ylabel="Амплитуда", color=:blue, legend=false, lw=2, xlims=(0, 600), grid=true)
+            title="Сглаженный выходной спектр (Zero-Padding)", 
+            ylabel="Амплитуда", color=:blue, legend=false, lw=2, xlims=(100, 400), grid=true)
             
         p_trans = plot(f_kHz[valid], trans_dB, 
-            title="Transmission (Пропускание, Bandgap)", 
+            title="Transmission (Акустический Bandgap)", 
             xlabel="Частота (кГц)", ylabel="дБ", 
             color=:purple, legend=false, lw=2.5, grid=true)
             
@@ -136,18 +304,20 @@ begin
 end
 
 
-# ╔═╡ 9a888539-0de8-4b4c-a6e2-d7afadfa7fef
+# ╔═╡ 1a42478e-1819-4f64-b260-5e26ec4450ab
 
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+DSP = "717857b8-e6f2-59f4-9121-6e50c889abd2"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 
 [compat]
+DSP = "~0.8.4"
 FFTW = "~1.10.0"
 JLD2 = "~0.5.15"
 Plots = "~1.41.2"
@@ -160,7 +330,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.12.3"
 manifest_format = "2.0"
-project_hash = "64e162b16cf11118a91887266502122b33cb5463"
+project_hash = "3f036f1657291034b157da348f14cff5f3c5e300"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -199,6 +369,11 @@ version = "1.11.0"
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 version = "1.11.0"
+
+[[deps.Bessels]]
+git-tree-sha1 = "4435559dc39793d53a9e3d278e185e920b4619ef"
+uuid = "0e736298-9ec6-45e8-9647-e4fc86a2fe38"
+version = "0.2.8"
 
 [[deps.BitFlags]]
 git-tree-sha1 = "0691e34b3bb8be9307330f88d1a3c3f25466c24d"
@@ -244,12 +419,10 @@ deps = ["ColorTypes", "FixedPointNumbers", "LinearAlgebra", "Requires", "Statist
 git-tree-sha1 = "8b3b6f87ce8f65a2b4f857528fd8d70086cd72b1"
 uuid = "c3611d14-8923-5661-9e6a-0046d554d3a4"
 version = "0.11.0"
+weakdeps = ["SpecialFunctions"]
 
     [deps.ColorVectorSpace.extensions]
     SpecialFunctionsExt = "SpecialFunctions"
-
-    [deps.ColorVectorSpace.weakdeps]
-    SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [[deps.Colors]]
 deps = ["ColorTypes", "FixedPointNumbers", "Reexport"]
@@ -268,10 +441,37 @@ git-tree-sha1 = "d9d26935a0bcffc87d2613ce14c527c99fc543fd"
 uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
 version = "2.5.0"
 
+[[deps.ConstructionBase]]
+git-tree-sha1 = "b4b092499347b18a015186eae3042f72267106cb"
+uuid = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
+version = "1.6.0"
+
+    [deps.ConstructionBase.extensions]
+    ConstructionBaseIntervalSetsExt = "IntervalSets"
+    ConstructionBaseLinearAlgebraExt = "LinearAlgebra"
+    ConstructionBaseStaticArraysExt = "StaticArrays"
+
+    [deps.ConstructionBase.weakdeps]
+    IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
+    LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
 [[deps.Contour]]
 git-tree-sha1 = "439e35b0b36e2e5881738abc8857bd92ad6ff9a8"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.3"
+
+[[deps.DSP]]
+deps = ["Bessels", "FFTW", "IterTools", "LinearAlgebra", "Polynomials", "Random", "Reexport", "SpecialFunctions", "Statistics"]
+git-tree-sha1 = "5989debfc3b38f736e69724818210c67ffee4352"
+uuid = "717857b8-e6f2-59f4-9121-6e50c889abd2"
+version = "0.8.4"
+
+    [deps.DSP.extensions]
+    OffsetArraysExt = "OffsetArrays"
+
+    [deps.DSP.weakdeps]
+    OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
 
 [[deps.DataAPI]]
 git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
@@ -396,6 +596,11 @@ git-tree-sha1 = "7a214fdac5ed5f59a22c2d9a885a16da1c74bbc7"
 uuid = "559328eb-81f9-559d-9380-de523a88c83c"
 version = "1.0.17+0"
 
+[[deps.Future]]
+deps = ["Random"]
+uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
+version = "1.11.0"
+
 [[deps.GLFW_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libglvnd_jll", "Xorg_libXcursor_jll", "Xorg_libXi_jll", "Xorg_libXinerama_jll", "Xorg_libXrandr_jll", "libdecor_jll", "xkbcommon_jll"]
 git-tree-sha1 = "b7bfd56fa66616138dfe5237da4dc13bbd83c67f"
@@ -499,6 +704,11 @@ version = "1.11.0"
 git-tree-sha1 = "b2d91fe939cae05960e760110b328288867b5758"
 uuid = "92d709cd-6900-40b7-9082-c6be49f344b6"
 version = "0.2.6"
+
+[[deps.IterTools]]
+git-tree-sha1 = "42d5f897009e7ff2cf88db414a389e5ed1bdd023"
+uuid = "c8e1da08-722c-5040-9ed9-7db0dc04731e"
+version = "1.10.0"
 
 [[deps.JLD2]]
 deps = ["FileIO", "MacroTools", "Mmap", "OrderedCollections", "PrecompileTools", "ScopedValues", "TranscodingStreams"]
@@ -784,6 +994,12 @@ deps = ["Artifacts", "Libdl"]
 uuid = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
 version = "3.5.4+0"
 
+[[deps.OpenSpecFun_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl"]
+git-tree-sha1 = "1346c9208249809840c91b26703912dff463d335"
+uuid = "efe28fd5-8261-553b-a9e1-b2916fc3738e"
+version = "0.5.6+0"
+
 [[deps.Opus_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "c392fc5dd032381919e3b22dd32d6443760ce7ea"
@@ -864,6 +1080,26 @@ deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "Downloads", 
 git-tree-sha1 = "3ac7038a98ef6977d44adeadc73cc6f596c08109"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 version = "0.7.79"
+
+[[deps.Polynomials]]
+deps = ["LinearAlgebra", "OrderedCollections", "Setfield", "SparseArrays"]
+git-tree-sha1 = "2d99b4c8a7845ab1342921733fa29366dae28b24"
+uuid = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
+version = "4.1.1"
+
+    [deps.Polynomials.extensions]
+    PolynomialsChainRulesCoreExt = "ChainRulesCore"
+    PolynomialsFFTWExt = "FFTW"
+    PolynomialsMakieExt = "Makie"
+    PolynomialsMutableArithmeticsExt = "MutableArithmetics"
+    PolynomialsRecipesBaseExt = "RecipesBase"
+
+    [deps.Polynomials.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+    Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
+    MutableArithmetics = "d8a4904e-b15c-11e9-3269-09a3773c0cb0"
+    RecipesBase = "3cdcf5f2-1ef4-517c-9805-6587b60abb01"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -970,6 +1206,12 @@ version = "1.3.0"
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 version = "1.11.0"
 
+[[deps.Setfield]]
+deps = ["ConstructionBase", "Future", "MacroTools", "StaticArraysCore"]
+git-tree-sha1 = "c5391c6ace3bc430ca630251d02ea9687169ca68"
+uuid = "efcf1570-3423-57d1-acb7-fd33fddbac46"
+version = "1.1.2"
+
 [[deps.Showoff]]
 deps = ["Dates", "Grisu"]
 git-tree-sha1 = "91eddf657aca81df9ae6ceb20b959ae5653ad1de"
@@ -996,11 +1238,28 @@ deps = ["Libdl", "LinearAlgebra", "Random", "Serialization", "SuiteSparse_jll"]
 uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 version = "1.12.0"
 
+[[deps.SpecialFunctions]]
+deps = ["IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
+git-tree-sha1 = "5acc6a41b3082920f79ca3c759acbcecf18a8d78"
+uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
+version = "2.7.1"
+
+    [deps.SpecialFunctions.extensions]
+    SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
+
+    [deps.SpecialFunctions.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+
 [[deps.StableRNGs]]
 deps = ["Random"]
 git-tree-sha1 = "4f96c596b8c8258cc7d3b19797854d368f243ddc"
 uuid = "860ef19b-820b-49d6-a774-d7a799459cd3"
 version = "1.0.4"
+
+[[deps.StaticArraysCore]]
+git-tree-sha1 = "6ab403037779dae8c514bad259f32a447262455a"
+uuid = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
+version = "1.4.4"
 
 [[deps.Statistics]]
 deps = ["LinearAlgebra"]
@@ -1377,12 +1636,16 @@ version = "1.13.0+0"
 """
 
 # ╔═╡ Cell order:
-# ╠═f2d289a0-1d73-11f1-afa8-892743c6a1d9
-# ╠═09b0f30f-2486-4771-a74e-b45707090102
+# ╟─f2d289a0-1d73-11f1-afa8-892743c6a1d9
+# ╠═5da2a73c-cbdd-4f63-b203-30edd7b1693f
+# ╠═a284b954-11bd-4b5f-a4fd-b77751232a72
 # ╠═0ab2150b-e81e-4212-93e4-7cab34d610c5
 # ╠═07f5686a-bef4-4f46-b769-8bee8fa043ec
-# ╠═7aae0b3d-3d77-4d51-b3ba-b89623bf55c6
-# ╠═e44c91ed-7e37-4922-8fa5-4257fc694e38
-# ╠═9a888539-0de8-4b4c-a6e2-d7afadfa7fef
+# ╟─7ee8b9bd-85ae-4572-a720-55e557155d74
+# ╟─9457d70e-62f3-4f98-8770-5be69776168a
+# ╠═189539c5-d6b8-4bae-90ef-873b605ee35a
+# ╠═4a0857d8-24b2-4165-bae0-1943f4de55da
+# ╠═d3746a92-cd56-423f-88dd-6db326681ef7
+# ╠═1a42478e-1819-4f64-b260-5e26ec4450ab
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
