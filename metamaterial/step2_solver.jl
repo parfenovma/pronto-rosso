@@ -29,9 +29,9 @@ function run_acoustic_simulation(A, freq)
     model = lock(GMSH_LOCK) do
         GmshDiscreteModel(mesh_file)
     end
-    rho_solid = 1150.0; cp_solid = 2340.0; cs_solid = 1170.0        
+    rho_solid = 1210.0; cp_solid = 2340.0; cs_solid = 1170.0      
     mu_solid = rho_solid * cs_solid^2; lam_solid = rho_solid * cp_solid^2 - 2*mu_solid 
-    alpha_damp = 0.0; beta_damp = 2.0e-8 
+    alpha_damp = 79560.0; beta_damp = 2.5e-9
 
     function pzt_signal(t)
         duration = 4.0 / freq
