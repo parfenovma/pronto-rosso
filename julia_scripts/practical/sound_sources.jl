@@ -67,25 +67,30 @@ begin
         360  66.0  78.5  79.6  74.0  77.0  77.0
     ]
 
-    raw_spectrum_mono = [31, 37.5, 42.5, 55, 82, 62.5, 65.5, 70, 70, 69, 69, 72, 72.5, 72, 73, 74, 71, 74, 70, 71.5, 70, 67, 68, 71, 63.5, 60, 60, 58, 59.5, 50]
+    raw_spectrum_mono = [31, 37.5, 42.5, 55, 60, 62.5, 65.5, 70, 70, 69, 69, 72, 72.5, 72, 73, 74, 71, 74, 70, 71.5, 70, 67, 68, 71, 63.5, 60, 60, 58, 59.5, 50]
     raw_spectrum_2 = [43, 46, 49, 52.5, 63.5, 65, 68, 73.5, 73.5, 67, 60, 65, 70, 72.5, 71.5, 69, 69, 73, 71, 70, 68.5, 67, 72, 73, 64, 60, 59, 56.5, 59, 48]
-    raw_spectrum_3 = [33.8, 37.1, 39.6, 46.5, 56.9, 57.7, 62.4, 68.9, 72, 71, 70, 65.5, 67, 71, 68.5, 71, 70, 71, 68.5, 66.7, 72.5, 72.8, 63.5, 62.2, 59, 56, 59, 48]
+    raw_spectrum_3 = [33.8, 37.1, 39.6, 46.5, 56.9, 57.7, 62.4, 68.9, 72, 72, 71, 72, 70, 65.5, 67, 71, 68.5, 71, 70, 71, 68.5, 66.7, 72.5, 72.8, 63.5, 62.2, 59, 56.6, 59, 48]
 
-    calib_reading = 101.0
+ #    calib_reading = 101.0
 	# delta_f_calib = 10*log10(1000*0.23)
 	
-    true_1Pa_dB = 20 * log10(1.0 / 20e-6)
-    calib_offset = true_1Pa_dB - calib_reading
+ #    true_1Pa_dB = 20 * log10(1.0 / 20e-6)
+ #    offset = true_1Pa_dB - calib_reading # - delta_f_calib
 
+	# NOTE: conversion + calibraion
+	offset = (
+		101.0 # data from 11-th channel with ethalon source
+		- 20*log10(1.0 / 20e-6) # 1Pa in dB (actually 94 dB)
+	    - 10*log10(1000*0.23) # 1Hz band conversion
+	)
 
+    spl_mono     = raw_mono[:, 2:end] .+ offset
+    spl_inphase  = raw_inphase[:, 2:end] .+ offset
+    spl_dipole   = raw_outphase[:, 2:end] .+ offset
 
-    spl_mono     = raw_mono[:, 2:end] .+ calib_offset
-    spl_inphase  = raw_inphase[:, 2:end] .+ calib_offset
-    spl_dipole   = raw_outphase[:, 2:end] .+ calib_offset
-
-    spec_mono = raw_spectrum_mono .+ calib_offset
-    spec_inphase = raw_spectrum_2 .+ calib_offset
-    spec_dipole = raw_spectrum_3 .+ calib_offset
+    spec_mono = raw_spectrum_mono .+ offset
+    spec_inphase = raw_spectrum_2 .+ offset
+    spec_dipole = raw_spectrum_3 .+ offset
 
     angles_rad = deg2rad.(raw_mono[:, 1])
     idx_0 = 1
@@ -94,11 +99,8 @@ begin
 end
 
 
-# ╔═╡ ac541173-216f-4440-83f6-7ff4d4ae7dc8
-true_1Pa_dB
-
 # ╔═╡ dc690235-05a8-4835-9e31-260455750364
-
+offset
 
 # ╔═╡ dc1ff381-2a5d-43ad-a288-31141a2c9a9d
 begin
@@ -113,52 +115,68 @@ begin
     pa_in   = p_ref .* 10 .^ (spl_1hz_in ./ 20)
     pa_dip  = p_ref .* 10 .^ (spl_1hz_dip ./ 20)
     
-    achx_plot = plot(freqs, pa_mono, xaxis=:log10, yaxis=:log10, m=:circle, 
+ #    achx_plot_pa = plot(freqs, pa_mono, xaxis=:log10, yaxis=:log10, m=:circle, 
+ #        label="Один источник", xticks=(freqs, string.(freqs)), color=:green,)
+        
+ #    plot!(achx_plot_pa, freqs, pa_in, m=:square, label="Синфазно", color=:blue)
+ #    plot!(achx_plot_pa, freqs, pa_dip, m=:utriangle, label="Диполь", color=:red)
+    
+	# plot!(achx_plot_pa, 
+	# xlabel="Частота, Гц", 
+	# ylabel="Звуковое давление, Па",
+	# title="АЧХ на оси 0° (приведено к 1 Гц)")# , ylims=(10^-4, 10^-1))
+
+end
+
+
+# ╔═╡ a5378d69-8e7e-4e23-a856-0ce70404efe5
+begin
+	achx_plot_db = plot(freqs, spl_1hz_mono, xaxis=:log10, m=:circle, 
         label="Один источник", xticks=(freqs, string.(freqs)), color=:green,)
         
-    plot!(achx_plot, freqs, pa_in, m=:square, label="Синфазно", color=:blue)
-    plot!(achx_plot, freqs, pa_dip, m=:utriangle, label="Диполь", color=:red)
+    plot!(achx_plot_db, freqs, spl_1hz_in, m=:square, label="Синфазно", color=:blue)
+    plot!(achx_plot_db, freqs, spl_1hz_dip, m=:utriangle, label="Диполь", color=:red)
     
-	plot!(achx_plot, 
+	plot!(achx_plot_db, 
 	xlabel="Частота, Гц", 
-	ylabel="Звуковое давление, Па/√Гц",
-	title="АЧХ на оси 0° (приведено к 1 Гц)", ylims=(10^-4, 10^-1))
-
+	ylabel="Звуковое давление, дБ",
+	title="АЧХ на оси 0° (приведено к 1 Гц)")
 end
-
 
 # ╔═╡ cd4ede95-0d89-40c7-bed1-f9ab165bd844
-begin
-    ρ = 1.21
-    c = 343.0
-    p_ref_ = 20e-6
-    W_ref = 1e-12
+# begin
+#     ρ = 1.21
+#     c = 343.0
+#     p_ref_ = 20e-6
     
-    r = 3.0 
+#     r = 3.0 
 
-    p_mono_Pa = p_ref_ .* 10 .^ (spl_mono[idx_0, :]  ./ 20)
-    p_in_Pa   = p_ref_ .* 10 .^ (spl_inphase[idx_0, :] ./ 20)
-    p_dip_Pa  = p_ref_ .* 10 .^ (spl_dipole[idx_0, :] ./ 20)
+#     p_mono_Pa = p_ref_ .* 10 .^ (spl_mono[idx_0, :]  ./ 20)
+#     p_in_Pa   = p_ref_ .* 10 .^ (spl_inphase[idx_0, :] ./ 20)
+#     p_dip_Pa  = p_ref_ .* 10 .^ (spl_dipole[idx_0, :] ./ 20)
     
 
-    W_mono = (p_mono_Pa .^ 2 ./ (ρ * c)) .* 4π * r^2
-    W_in   = (p_in_Pa   .^ 2 ./ (ρ * c)) .* 4π * r^2
-    W_dip  = (p_dip_Pa  .^ 2 ./ (ρ * c)) .* 4π * r^2
-    
-    Lw_mono = 10 .* log10.(W_mono ./ W_ref)
-    Lw_in   = 10 .* log10.(W_in   ./ W_ref)
-    Lw_dip  = 10 .* log10.(W_dip  ./ W_ref)
-    p2 = plot(freqs, W_mono, xaxis=:log10, yaxis=:log10, m=:circle,
-        label="1 Колонка (Моно)", xticks=(freqs, string.(freqs)), color=:green)
-    plot!(p2, freqs, W_in,  m=:square,    label="Синфазно", color=:blue)
-    plot!(p2, freqs, W_dip, m=:utriangle, label="Диполь",   color=:red)
-    plot!(p2,
-        xlabel="Частота, Гц",
-        ylabel="Мощность W, Вт",
-        title="Акустическая мощность в Ваттах\nW = (p²/ρc)·4πr²  [r = $(r) м]")
+#     W_mono = (p_mono_Pa .^ 2 ./ (ρ * c)) .* 4π * r^2
+#     W_in   = (p_in_Pa   .^ 2 ./ (ρ * c)) .* 4π * r^2
+#     W_dip  = (p_dip_Pa  .^ 2 ./ (ρ * c)) .* 4π * r^2
 
-    plot(p2, legend=:bottomright, ylims=(10^-5, 10^-1))
-end
+# 	# W_ref = 1e-12
+#  #    Lw_mono = 10 .* log10.(W_mono ./ W_ref)
+#  #    Lw_in   = 10 .* log10.(W_in   ./ W_ref)
+#  #    Lw_dip  = 10 .* log10.(W_dip  ./ W_ref)
+#     p2 = plot(freqs, p_mono_Pa, xaxis=:log10,
+# 		# yaxis=:log10,
+# 		m=:circle,
+#         label="1 Колонка (Моно)", xticks=(freqs, string.(freqs)), color=:green)
+#     plot!(p2, freqs, p_in_Pa,  m=:square,    label="Синфазно", color=:blue)
+#     plot!(p2, freqs, p_dip_Pa, m=:utriangle, label="Диполь",   color=:red)
+#     plot!(p2,
+#         xlabel="Частота, Гц",
+#         ylabel="Мощность W, Вт",
+#         title="Акустическая мощность в Ваттах\nW = (p²/ρc)·4πr²  [r = $(r) м]")
+
+#     plot(p2, legend=:bottomright) #, ylims=(10^-5, 10^-1))
+# end
 
 
 
@@ -189,43 +207,130 @@ end
 
 
 # ╔═╡ e9c47828-832c-404c-b5f5-6640141a1876
+begin
+	THIRD_OCTAVE_BAND_CENTERS_1 = [
+	    25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0,
+	    250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0,
+	    2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0, 10000.0,
+	    12500.0, 16000.0, 20000.0
+	]
+	
+	deltas = THIRD_OCTAVE_BAND_CENTERS_1 .* 0.23
+
+
+	spec_plot_calibrated = plot(
+        1:length(spec_mono), (spec_mono .- 10 .* log10.(deltas)), st=:stepmid, 
+        label="Одиночный источник", color=:green, alpha=0.9
+    )
+    
+    plot!(spec_plot_calibrated, 
+        1:length(spec_inphase), (spec_inphase .- 10 .* log10.(deltas)), st=:stepmid, 
+        label="Синфазно", color=:blue, alpha=0.9
+    )
+    
+    plot!(spec_plot_calibrated, 
+        1:length(spec_dipole), (spec_dipole .- 10 .* log10.(deltas)), st=:stepmid, 
+        label="Противофазно (Диполь)", color=:red, alpha=0.9
+    )
+    
+    plot!(spec_plot_calibrated, 
+        xlabel="Номер спектрального канала", 
+        ylabel="Откалиброванное звуковое давление, дБ", 
+        title="Спектры мощности по каналам,\nприведенные к полосе в 1 Гц",
+        xticks=1:2:30
+    )
+end
+
+# ╔═╡ 82f19dc7-f1d3-4228-84e9-db5c0c8c0b60
+begin
+    ρ = 1.21
+    c = 343.0
+    p_ref_ = 20e-6
+    
+    r = 3.0 
+
+    p_mono_Pa = p_ref_ .* 10 .^ (spec_mono  ./ 20)
+    p_in_Pa   = p_ref_ .* 10 .^ (spec_inphase ./ 20)
+    p_dip_Pa  = p_ref_ .* 10 .^ (spec_dipole ./ 20)
+    
+
+    W_mono = (p_mono_Pa .^ 2 ./ (ρ * c)) .* 4π * r^2
+    W_in   = (p_in_Pa   .^ 2 ./ (ρ * c)) .* 4π * r^2
+    W_dip  = (p_dip_Pa  .^ 2 ./ (ρ * c)) .* 4π * r^2
+
+	W_ref = 1e-12
+ #    Lw_mono = 10 .* log10.(W_mono ./ W_ref)
+ #    Lw_in   = 10 .* log10.(W_in   ./ W_ref)
+ #    Lw_dip  = 10 .* log10.(W_dip  ./ W_ref)
+    p2 = plot(THIRD_OCTAVE_BAND_CENTERS_1, p_mono_Pa, xaxis=:log10,
+		# yaxis=:log10,
+		m=:circle,
+        label="1 Колонка (Моно)", 
+			  # xticks=(THIRD_OCTAVE_BAND_CENTERS_1, string.(THIRD_OCTAVE_BAND_CENTERS_1)), 
+			  color=:green)
+    plot!(p2, THIRD_OCTAVE_BAND_CENTERS_1, p_in_Pa,  m=:square,    label="Синфазно", color=:blue)
+    plot!(p2, THIRD_OCTAVE_BAND_CENTERS_1, p_dip_Pa, m=:utriangle, label="Диполь",   color=:red)
+    plot!(p2,
+        xlabel="Частота, Гц",
+        ylabel="Мощность W, Вт",
+        title="Давление в Па")
+
+    plot(p2, legend=:bottomright) #, ylims=(10^-5, 10^-1))
+end
+
+
+
+# ╔═╡ 3346e944-954e-4d34-aa34-a23cf54f039a
+begin
+	p3 = plot(THIRD_OCTAVE_BAND_CENTERS_1, W_mono, xaxis=:log10,
+			# yaxis=:log10,
+			m=:circle,
+	        label="1 Колонка (Моно)", 
+				  # xticks=(THIRD_OCTAVE_BAND_CENTERS_1, string.(THIRD_OCTAVE_BAND_CENTERS_1)), 
+				  color=:green)
+	    plot!(p3, THIRD_OCTAVE_BAND_CENTERS_1, W_in,  m=:square,    label="Синфазно", color=:blue)
+	    plot!(p3, THIRD_OCTAVE_BAND_CENTERS_1, W_dip, m=:utriangle, label="Диполь",   color=:red)
+	    plot!(p3,
+	        xlabel="Частота, Гц",
+	        ylabel="Мощность W, Вт",
+	        title="Акустическая мощность в Ваттах\nW = (p²/ρc)·4πr²  [r = $(r) м]")
+	
+	    plot(p3, legend=:bottomright) #, ylims=(10^-5, 10^-1))
+end
+
+# ╔═╡ ea1a47da-6494-48c4-b102-ef47d1c04f36
+begin
+	plot(THIRD_OCTAVE_BAND_CENTERS_1, W_in ./ W_mono, xlims=(63, 1000), title="Зависимость отношения мощности монополя \nотносительно одного источника")
+end
+
+
+# ╔═╡ 9b158585-6ee4-4c04-9d0a-6b1eade9e2d5
+
+
+# ╔═╡ 320f52fa-dc39-4516-85a1-8daee01c1780
+
+
+# ╔═╡ b34f3c4a-4229-4c6d-b954-01ced6edf5ce
 
 
 # ╔═╡ 24fbc7bb-0ff6-4a31-a4dc-e4ea498c69c3
-# begin
-#     phys_d = 0.28 
-#     c_sound = 343.0
-    
-#     delta_L = W_dip[idx_0, :] .- W_mono[idx_0, :]
-    
-#     d_calc = (c_sound ./ (2 .* pi .* freqs)) .* (10 .^ (delta_L ./ 20))
-    
-#     d_mean = mean(d_calc[1:2])
-    
-#     dist_plot = plot(freqs, d_calc, xaxis=:log10, m=:diamond, label="Расчетное d (м)",
-#         xticks=(freqs, string.(freqs)), color=:purple, ylims=(0, maximum(d_calc)*1.2))
-    
-#     hline!(dist_plot, [phys_d], label="Измеренное рулеткой ($phys_d м)", linestyle=:dash, color=:black)
-    
-#     plot!(dist_plot, xlabel="Частота, Гц", ylabel="База диполя d, метры",
-#         title="Оценка базы d: Расчет = $(round(d_mean, digits=2)) м (По НЧ)")
-# end
+
 begin
     phys_d = 0.28 
     W_ratio_dip  = W_dip  ./ W_mono 
     W_ratio_in   = W_in   ./ W_mono 
     
-    d_from_power = (c ./ (2π .* freqs)) .* sqrt.(W_ratio_dip)
+    d_from_power = (c ./ (2π .* THIRD_OCTAVE_BAND_CENTERS_1)) .* sqrt.(W_ratio_dip)
     
     d_mean_power = mean(d_from_power[1:2])
     
 
-    dist_plot = plot(freqs, d_from_power,
+    dist_plot = plot(THIRD_OCTAVE_BAND_CENTERS_1, d_from_power,
         xaxis = :log10,
         m = :circle,
         color = :red,
         label = "Оценка",
-        xticks = (freqs, string.(freqs)),
+        # xticks = (THIRD_OCTAVE_BAND_CENTERS_1, string.(THIRD_OCTAVE_BAND_CENTERS_1)),
         ylims = (0, maximum(d_from_power[1:4]) * 1.5),
         linewidth = 2)
     
@@ -238,7 +343,7 @@ begin
     f_crit = c / (2π * phys_d)
     plot!(dist_plot,
         xlabel = "Частота, Гц",
-        ylabel = "База диполя d, м")
+        ylabel = "База диполя d, м", title="Оценка базы диполя")
 end
 
 
@@ -1813,14 +1918,20 @@ version = "1.13.0+0"
 # ╔═╡ Cell order:
 # ╟─7136e164-2f59-11f1-a6d0-4f47ae83c233
 # ╠═006b6b5b-a31f-48c1-9170-c43298723684
-# ╠═ac541173-216f-4440-83f6-7ff4d4ae7dc8
 # ╠═dc690235-05a8-4835-9e31-260455750364
 # ╠═dc1ff381-2a5d-43ad-a288-31141a2c9a9d
+# ╠═a5378d69-8e7e-4e23-a856-0ce70404efe5
 # ╠═cd4ede95-0d89-40c7-bed1-f9ab165bd844
 # ╟─4a4591da-b8d8-40cf-a7b8-d045869e85cb
 # ╠═e9c47828-832c-404c-b5f5-6640141a1876
+# ╠═82f19dc7-f1d3-4228-84e9-db5c0c8c0b60
+# ╠═3346e944-954e-4d34-aa34-a23cf54f039a
+# ╠═ea1a47da-6494-48c4-b102-ef47d1c04f36
+# ╠═9b158585-6ee4-4c04-9d0a-6b1eade9e2d5
+# ╠═320f52fa-dc39-4516-85a1-8daee01c1780
+# ╠═b34f3c4a-4229-4c6d-b954-01ced6edf5ce
 # ╠═24fbc7bb-0ff6-4a31-a4dc-e4ea498c69c3
-# ╠═0fd7e9ab-6307-4fb3-ae5f-797e285e4f7b
+# ╟─0fd7e9ab-6307-4fb3-ae5f-797e285e4f7b
 # ╟─a7d90a51-5488-40fa-9612-fd88cf8c7d1f
 # ╟─cc817897-566a-4190-97b5-169eb3c49bdc
 # ╟─2e7bad54-8cc6-4903-802c-4e9f3c5be687
